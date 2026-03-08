@@ -304,7 +304,7 @@ online_image:
   - id: dashboard_image_departures
     format: PNG
     type: BINARY
-    url: https://screenshot.oracle.neuhuber.eu/screenshot?width=800&height=480&delay_ms=0&bw=true&wait_for=%5Bdata-ready%5D&url=https%3A%2F%2Foebb.oracle.neuhuber.eu%2Fmulti.html%3Fstations%3D1290501%2C0905026%2C1390563%26num_journeys%3D10%26additional_time%3D5%26total%3D10%26update_interval%3D30%26font_color%3Dffffff%26background_color%3D000000%26show_clock%3Dtrue%26show_header%3Dtrue
+    url: https://screenshot.oracle.neuhuber.eu/screenshot?width=800&height=480&delay_ms=0&bw=true&wait_for=%5Bdata-ready%5D&url=https%3A%2F%2Foebb.oracle.neuhuber.eu%2Fmulti.html%3Fstations%3D1290501%3A1292001%2C0905026%2C1390563%26num_journeys%3D10%26additional_time%3D5%26total%3D10%26update_interval%3D30%26font_color%3Dffffff%26background_color%3D000000%26show_clock%3Dtrue%26show_header%3Dtrue
     update_interval: never
     on_download_finished:
       - lambda: |-
