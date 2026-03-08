@@ -72,6 +72,10 @@ globals:
     type: bool
     restore_value: false
     initial_value: "false"
+  - id: battery_glyph
+    type: std::string
+    restore_value: false
+    initial_value: "\"\\U000F0079\""
 
 sensor:
   - platform: sht4x
@@ -102,6 +106,20 @@ sensor:
     state_class: measurement
     lambda: "return id(battery_voltage).state;"
     update_interval: never
+    on_value:
+      then:
+        - lambda: |-
+            int pct = int(x);
+            if (pct <= 10)      id(battery_glyph) = "\U000F007A";
+            else if (pct <= 20) id(battery_glyph) = "\U000F007B";
+            else if (pct <= 30) id(battery_glyph) = "\U000F007C";
+            else if (pct <= 40) id(battery_glyph) = "\U000F007D";
+            else if (pct <= 50) id(battery_glyph) = "\U000F007E";
+            else if (pct <= 60) id(battery_glyph) = "\U000F007F";
+            else if (pct <= 70) id(battery_glyph) = "\U000F0080";
+            else if (pct <= 80) id(battery_glyph) = "\U000F0081";
+            else if (pct <= 90) id(battery_glyph) = "\U000F0082";
+            else                id(battery_glyph) = "\U000F0079";
     filters:
       - calibrate_linear:
           - 4.15 -> 100.0
@@ -298,6 +316,24 @@ font:
   - file: "gfonts://Inter@700"
     id: font_inter
     size: 24
+  - file: "gfonts://Arimo"
+    id: font_status
+    size: 18
+    glyphs: "0123456789.°C "
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: font_bat_icon
+    size: 24
+    glyphs:
+      - "\U000F007A" # mdi-battery-10
+      - "\U000F007B" # mdi-battery-20
+      - "\U000F007C" # mdi-battery-30
+      - "\U000F007D" # mdi-battery-40
+      - "\U000F007E" # mdi-battery-50
+      - "\U000F007F" # mdi-battery-60
+      - "\U000F0080" # mdi-battery-70
+      - "\U000F0081" # mdi-battery-80
+      - "\U000F0082" # mdi-battery-90
+      - "\U000F0079" # mdi-battery (full)
 
 display:
   - platform: waveshare_epaper
@@ -315,6 +351,12 @@ display:
     update_interval: never
     lambda: |-
       it.image(0, 0, id(dashboard_image_departures));
+      // Status overlay: battery icon then temperature in top left
+      it.filled_rectangle(0, 0, 120, 26, COLOR_OFF);
+      it.printf(2, 1, id(font_bat_icon), COLOR_ON, TextAlign::TOP_LEFT, "%s", id(battery_glyph).c_str());
+      if (id(temp_sensor).has_state()) {
+        it.printf(28, 4, id(font_status), COLOR_ON, TextAlign::TOP_LEFT, "%.1f°C", id(temp_sensor).state);
+      }
       if (id(is_loading)) {
         it.filled_rectangle(300, 0, 200, 32, COLOR_OFF);
         it.print(400, 4, id(font_inter), COLOR_ON, TextAlign::TOP_CENTER, "Loading...");
