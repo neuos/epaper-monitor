@@ -68,6 +68,10 @@ globals:
     type: int
     restore_value: false
     initial_value: "0"
+  - id: is_loading
+    type: bool
+    restore_value: false
+    initial_value: "false"
 
 sensor:
   - platform: sht4x
@@ -182,7 +186,7 @@ binary_sensor:
     on_press:
       then:
         - script.execute: reset_sleep_timer
-        - component.update: dashboard_image_departures
+        - script.execute: refresh_departures
 
   - platform: gpio
     pin:
@@ -195,7 +199,7 @@ binary_sensor:
     on_press:
       then:
         - script.execute: reset_sleep_timer
-        - component.update: dashboard_image_departures
+        - script.execute: refresh_departures
 
 http_request:
   verify_ssl: false
@@ -216,9 +220,16 @@ script:
       - lambda: |-
           auto wakeup_cause = esp_sleep_get_wakeup_cause();
           ESP_LOGI("wakeup", "Wakeup cause: %d (0=undefined, 2=ext0/GPIO, 4=timer)", wakeup_cause);
-      - delay: 500ms
+      - script.execute: refresh_departures
+
+  - id: refresh_departures
+    mode: single
+    then:
       - lambda: |-
-          ESP_LOGI("wakeup", "Updating dashboard_image_departures");
+          id(is_loading) = true;
+      - component.update: epaper_display
+      - lambda: |-
+          ESP_LOGI("refresh", "Updating dashboard_image_departures");
           id(dashboard_image_departures).update();
 
   - id: check_time_and_sleep
@@ -278,6 +289,8 @@ online_image:
     url: https://screenshot.oracle.neuhuber.eu/screenshot?width=800&height=480&delay_ms=0&bw=true&wait_for=%5Bdata-ready%5D&url=https%3A%2F%2Foebb.oracle.neuhuber.eu%2Fmulti.html%3Fstations%3D1290501%2C0905026%2C1390563%26num_journeys%3D10%26additional_time%3D5%26total%3D10%26update_interval%3D30%26font_color%3Dffffff%26background_color%3D000000%26show_clock%3Dtrue%26show_header%3Dtrue
     update_interval: never
     on_download_finished:
+      - lambda: |-
+          id(is_loading) = false;
       - delay: 100ms
       - component.update: epaper_display
 
@@ -289,7 +302,8 @@ font:
 display:
   - platform: waveshare_epaper
     id: epaper_display
-    model: 7.50inv2
+    model: 7.50inV2p
+    full_update_every: 2
     cs_pin: GPIO10
     dc_pin: GPIO11
     reset_pin:
@@ -301,4 +315,7 @@ display:
     update_interval: never
     lambda: |-
       it.image(0, 0, id(dashboard_image_departures));
-      it.print(0, 0, id(font_inter), "Hello World!");
+      if (id(is_loading)) {
+        it.filled_rectangle(300, 0, 200, 32, COLOR_OFF);
+        it.print(400, 4, id(font_inter), COLOR_ON, TextAlign::TOP_CENTER, "Loading...");
+      }
