@@ -265,40 +265,32 @@ script:
 
           int hour = time.hour;
           int minute = time.minute;
+          int total_minutes = hour * 60 + minute;
           ESP_LOGI("sleep_script", "Current time: %02d:%02d", hour, minute);
 
+          id(onboard_led).turn_off();
+
           if (hour >= 22 || hour < 6) {
-            ESP_LOGI("sleep_script", "Night time (22:00-06:00), sleeping until 6am");
+            // Night (22:00-06:00): sleep until 6am
+            int minutes_until_6am;
+            if (hour >= 22) {
+              minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
+            } else {
+              minutes_until_6am = (6 - hour) * 60 - minute;
+            }
+            ESP_LOGI("sleep_script", "Night time, sleeping for %d minutes until 6am", minutes_until_6am);
+            id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
+          } else if (total_minutes >= 410 && total_minutes < 440) {
+            // Rush hour (06:50-07:20): refresh every 2 minutes
+            ESP_LOGI("sleep_script", "Rush hour (06:50-07:20), sleeping for 2 minutes");
+            id(deep_sleep_1).set_sleep_duration(2 * 60 * 1000);
+          } else {
+            // Daytime: refresh every 60 minutes
+            ESP_LOGI("sleep_script", "Day time, sleeping for 60 minutes");
+            id(deep_sleep_1).set_sleep_duration(60 * 60 * 1000);
           }
-      - if:
-          condition:
-            lambda: |-
-              auto time = id(homeassistant_time).now();
-              int hour = time.hour;
-              return (hour >= 22 || hour < 6);
-          then:
-            - lambda: |-
-                auto time = id(homeassistant_time).now();
-                int hour = time.hour;
-                int minute = time.minute;
 
-                int minutes_until_6am;
-                if (hour >= 22) {
-                  minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
-                } else {
-                  minutes_until_6am = (6 - hour) * 60 - minute;
-                }
-
-                ESP_LOGI("sleep_script", "Sleeping for %d minutes until 6am", minutes_until_6am);
-                id(onboard_led).turn_off();
-                id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
-                id(deep_sleep_1).begin_sleep();
-          else:
-            - lambda: |-
-                ESP_LOGI("sleep_script", "Day time (06:00-22:00), sleeping for 60 minutes");
-                id(onboard_led).turn_off();
-                id(deep_sleep_1).set_sleep_duration(60 * 60 * 1000);
-                id(deep_sleep_1).begin_sleep();
+          id(deep_sleep_1).begin_sleep();
 
 online_image:
   - id: dashboard_image_departures
