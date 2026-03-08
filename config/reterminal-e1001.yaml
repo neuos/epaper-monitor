@@ -1,0 +1,291 @@
+substitutions:
+  name: e1001
+  friendly_name: "reTerminal E1001"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: 600
+      then:
+        - output.turn_on: bsp_sd_enable
+        - output.turn_on: bsp_battery_enable
+        - delay: 200ms
+        - component.update: battery_voltage
+        - component.update: battery_level
+        - light.turn_on: onboard_led
+    - priority: -100
+      then:
+        - delay: 5s
+        - script.execute: handle_wakeup
+        - script.execute: reset_sleep_timer
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0 # Required to report logs over USB on this device
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+deep_sleep:
+  id: deep_sleep_1
+  wakeup_pin: GPIO3
+  wakeup_pin_mode: INVERT_WAKEUP
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+i2c:
+  scl: GPIO20
+  sda: GPIO19
+
+globals:
+  - id: sleep_timer_seconds
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+sensor:
+  - platform: sht4x
+    temperature:
+      name: "Temperature"
+      id: temp_sensor
+    humidity:
+      name: "Relative Humidity"
+      id: hum_sensor
+    update_interval: 90s
+  - platform: adc
+    pin: GPIO1
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 90s
+    attenuation: 12db
+    filters:
+      - multiply: 2.0
+    on_value:
+      then:
+        - component.update: battery_level
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    icon: "mdi:battery"
+    device_class: battery
+    state_class: measurement
+    lambda: "return id(battery_voltage).state;"
+    update_interval: never
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+output:
+  - platform: gpio
+    pin: GPIO6
+    id: bsp_led
+    inverted: true
+  - platform: gpio
+    pin: GPIO16
+    id: bsp_sd_enable
+  - platform: gpio
+    pin: GPIO21
+    id: bsp_battery_enable
+
+light:
+  - platform: binary
+    name: "Onboard LED"
+    output: bsp_led
+    id: onboard_led
+    internal: true
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+    timezone: "Europe/Vienna"
+
+text_sensor:
+  - platform: version
+    hide_timestamp: true
+    name: "${friendly_name} ESPHome Version"
+    entity_category: diagnostic
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+      icon: mdi:wifi
+      entity_category: diagnostic
+      id: sensorip
+    ssid:
+      name: "${friendly_name} Connected SSID"
+      icon: mdi:wifi-strength-2
+      entity_category: diagnostic
+      id: sensorssid
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(sleep_timer_seconds)++;
+          if (id(sleep_timer_seconds) % 30 == 0) {
+            ESP_LOGI("sleep_timer", "Timer at %d seconds", id(sleep_timer_seconds));
+          }
+          if (id(sleep_timer_seconds) >= 90) {
+            ESP_LOGI("sleep_timer", "90 seconds elapsed, checking time and entering sleep");
+            id(check_time_and_sleep).execute();
+          }
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+      inverted: true
+    id: right
+    name: "Right"
+    internal: true
+    on_press:
+      then:
+        - script.execute: reset_sleep_timer
+        - component.update: dashboard_image_departures
+
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: true
+    id: left
+    name: "Left"
+    internal: true
+    on_press:
+      then:
+        - script.execute: reset_sleep_timer
+        - component.update: dashboard_image_departures
+
+http_request:
+  verify_ssl: false
+  timeout: 10s
+  watchdog_timeout: 15s
+
+script:
+  - id: reset_sleep_timer
+    mode: queued
+    then:
+      - lambda: |-
+          ESP_LOGI("sleep_timer", "Timer reset to 0");
+          id(sleep_timer_seconds) = 0;
+
+  - id: handle_wakeup
+    mode: single
+    then:
+      - lambda: |-
+          auto wakeup_cause = esp_sleep_get_wakeup_cause();
+          ESP_LOGI("wakeup", "Wakeup cause: %d (0=undefined, 2=ext0/GPIO, 4=timer)", wakeup_cause);
+      - delay: 300ms
+      - lambda: |-
+          ESP_LOGI("wakeup", "Updating dashboard_image_departures");
+          id(dashboard_image_departures).update();
+
+  - id: check_time_and_sleep
+    mode: single
+    then:
+      - lambda: |-
+          auto time = id(homeassistant_time).now();
+          if (!time.is_valid()) {
+            ESP_LOGW("sleep_script", "Time not available, sleeping for 30 minutes");
+            id(onboard_led).turn_off();
+            id(deep_sleep_1).set_sleep_duration(30 * 60 * 1000);
+            id(deep_sleep_1).begin_sleep();
+            return;
+          }
+
+          int hour = time.hour;
+          int minute = time.minute;
+          ESP_LOGI("sleep_script", "Current time: %02d:%02d", hour, minute);
+
+          if (hour >= 22 || hour < 6) {
+            ESP_LOGI("sleep_script", "Night time (22:00-06:00), sleeping until 6am");
+          }
+      - if:
+          condition:
+            lambda: |-
+              auto time = id(homeassistant_time).now();
+              int hour = time.hour;
+              return (hour >= 22 || hour < 6);
+          then:
+            - lambda: |-
+                auto time = id(homeassistant_time).now();
+                int hour = time.hour;
+                int minute = time.minute;
+
+                int minutes_until_6am;
+                if (hour >= 22) {
+                  minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
+                } else {
+                  minutes_until_6am = (6 - hour) * 60 - minute;
+                }
+
+                ESP_LOGI("sleep_script", "Sleeping for %d minutes until 6am", minutes_until_6am);
+                id(onboard_led).turn_off();
+                id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
+                id(deep_sleep_1).begin_sleep();
+          else:
+            - lambda: |-
+                ESP_LOGI("sleep_script", "Day time (06:00-22:00), sleeping for 60 minutes");
+                id(onboard_led).turn_off();
+                id(deep_sleep_1).set_sleep_duration(60 * 60 * 1000);
+                id(deep_sleep_1).begin_sleep();
+
+online_image:
+  - id: dashboard_image_departures
+    format: PNG
+    type: BINARY
+    url: https://screenshot.oracle.neuhuber.eu/screenshot?width=1600&height=960&delay_ms=0&bw=true&wait_for=%5Bdata-ready%5D&url=https%3A%2F%2Foebb.oracle.neuhuber.eu%2Fmulti.html%3Fstations%3D1290501%2C0905026%2C1390563%26num_journeys%3D10%26additional_time%3D5%26total%3D10%26update_interval%3D30%26font_color%3Dffffff%26background_color%3D000000%26show_clock%3Dtrue%26show_header%3Dtrue
+    update_interval: never
+    on_download_finished:
+      - delay: 100ms
+      - component.update: epaper_display
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    model: 7.50inv2
+    cs_pin: GPIO10
+    dc_pin: GPIO11
+    reset_pin:
+      number: GPIO12
+      inverted: false
+    busy_pin:
+      number: GPIO13
+      inverted: true
+    update_interval: never
+    lambda: |-
+      it.image(0, 0, id(dashboard_image_departures));
