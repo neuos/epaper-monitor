@@ -9,7 +9,7 @@ The repository contains:
 ## Architecture
 
 ```mermaid
-flowchart LR
+flowchart TD
   OEBB["ÖBB Scotty<br/>JSONP API"]
   Server["Server<br/>oebb-monitor"]
   Device["reTerminal E1001<br/>ESPHome"]
