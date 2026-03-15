@@ -1,7 +1,9 @@
 substitutions:
   name: e1001
   friendly_name: "reTerminal E1001"
-  departures_url: "http://192.168.0.171:5010/departures.csv?stations=1290501:1292001:1390761,0905026:1390764,1390563:1390162:1390277&num_journeys=10&additional_time=1&total=11"
+  departures_host: !secret departures_host
+  departures_stations: !secret departures_stations
+  departures_url: "${departures_host}/departures.csv?stations=${departures_stations}&num_journeys=10&additional_time=1&total=11"
 
 esphome:
   name: ${name}
