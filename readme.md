@@ -2,6 +2,8 @@
 
 A self-hosted system that renders live ÖBB (Austrian Federal Railways) departure boards on a Waveshare 7.5" e-paper display driven by a Seeed reTerminal E1001 (ESP32‑S3).
 
+<img src="images/epaper-terminal.jpg" alt="ePaper Monitor" width="600" />
+
 The repository contains:
 - `oebb-monitor/`: a lightweight Go HTTP service that fetches and normalizes departure data from the ÖBB Scotty (JSONP) API and exposes it as CSV
 - `esphome/`: ESPHome firmware configuration for the e-paper device that fetches the CSV and draws the table directly on-device
@@ -101,11 +103,4 @@ Flashing example:
 esphome run --device /dev/<serial-device> esphome/config/reterminal-e1001.yaml
 ```
 
-## Repository layout
-
-```text
-epaper-monitor/
-  esphome/        # ESPHome firmware configuration
-  oebb-monitor/   # Go service that exposes /departures.csv
-  readme.md
-```
+Or with the web interface using the dockerfile.
