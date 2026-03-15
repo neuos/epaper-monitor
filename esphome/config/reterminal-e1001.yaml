@@ -1,0 +1,503 @@
+substitutions:
+  name: e1001
+  friendly_name: "reTerminal E1001"
+  departures_url: "http://192.168.0.171:5010/departures.csv?stations=1290501:1292001:1390761,0905026:1390764,1390563:1390162:1390277&num_journeys=10&additional_time=1&total=11"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  on_boot:
+    - priority: 600
+      then:
+        - output.turn_on: bsp_sd_enable
+        - output.turn_on: bsp_battery_enable
+        - delay: 200ms
+        - component.update: battery_voltage
+        - component.update: battery_level
+        - light.turn_on: onboard_led
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+logger:
+  hardware_uart: UART0 # Required to report logs over USB on this device
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      bssid: !secret wifi_bssid
+      manual_ip:
+        static_ip: !secret wifi_static_ip
+        gateway: !secret wifi_gateway
+        subnet: !secret wifi_subnet
+        dns1: !secret wifi_dns1
+        dns2: !secret wifi_dns2
+  fast_connect: true
+  on_connect:
+    - script.execute: handle_wakeup
+    - script.execute: reset_sleep_timer
+
+deep_sleep:
+  id: deep_sleep_1
+  wakeup_pin: GPIO3
+  wakeup_pin_mode: INVERT_WAKEUP
+
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+i2c:
+  scl: GPIO20
+  sda: GPIO19
+
+globals:
+  - id: sleep_timer_seconds
+    type: int
+    restore_value: false
+    initial_value: "0"
+  - id: is_loading
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: battery_glyph
+    type: std::string
+    restore_value: false
+    initial_value: "\"\\U000F0079\""
+  - id: csv_body
+    type: std::string
+    restore_value: false
+    initial_value: '""'
+
+sensor:
+  - platform: sht4x
+    temperature:
+      name: "Temperature"
+      id: temp_sensor
+    humidity:
+      name: "Relative Humidity"
+      id: hum_sensor
+    update_interval: 90s
+  - platform: adc
+    pin: GPIO1
+    name: "Battery Voltage"
+    id: battery_voltage
+    update_interval: 90s
+    attenuation: 12db
+    filters:
+      - multiply: 2.0
+    on_value:
+      then:
+        - component.update: battery_level
+  - platform: template
+    name: "Battery Level"
+    id: battery_level
+    unit_of_measurement: "%"
+    icon: "mdi:battery"
+    device_class: battery
+    state_class: measurement
+    lambda: "return id(battery_voltage).state;"
+    update_interval: never
+    on_value:
+      then:
+        - lambda: |-
+            int pct = int(x);
+            if (pct <= 10)      id(battery_glyph) = "\U000F007A";
+            else if (pct <= 20) id(battery_glyph) = "\U000F007B";
+            else if (pct <= 30) id(battery_glyph) = "\U000F007C";
+            else if (pct <= 40) id(battery_glyph) = "\U000F007D";
+            else if (pct <= 50) id(battery_glyph) = "\U000F007E";
+            else if (pct <= 60) id(battery_glyph) = "\U000F007F";
+            else if (pct <= 70) id(battery_glyph) = "\U000F0080";
+            else if (pct <= 80) id(battery_glyph) = "\U000F0081";
+            else if (pct <= 90) id(battery_glyph) = "\U000F0082";
+            else                id(battery_glyph) = "\U000F0079";
+    filters:
+      - calibrate_linear:
+          - 4.15 -> 100.0
+          - 3.96 -> 90.0
+          - 3.91 -> 80.0
+          - 3.85 -> 70.0
+          - 3.80 -> 60.0
+          - 3.75 -> 50.0
+          - 3.68 -> 40.0
+          - 3.58 -> 30.0
+          - 3.49 -> 20.0
+          - 3.41 -> 10.0
+          - 3.30 -> 5.0
+          - 3.27 -> 0.0
+      - clamp:
+          min_value: 0
+          max_value: 100
+
+output:
+  - platform: gpio
+    pin: GPIO6
+    id: bsp_led
+    inverted: true
+  - platform: gpio
+    pin: GPIO16
+    id: bsp_sd_enable
+  - platform: gpio
+    pin: GPIO21
+    id: bsp_battery_enable
+
+light:
+  - platform: binary
+    name: "Onboard LED"
+    output: bsp_led
+    id: onboard_led
+    internal: true
+
+time:
+  - platform: sntp
+    id: sntp_time
+    timezone: "Europe/Vienna"
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
+
+text_sensor:
+  - platform: version
+    hide_timestamp: true
+    name: "${friendly_name} ESPHome Version"
+    entity_category: diagnostic
+  - platform: wifi_info
+    ip_address:
+      name: "${friendly_name} IP Address"
+      icon: mdi:wifi
+      entity_category: diagnostic
+      id: sensorip
+    ssid:
+      name: "${friendly_name} Connected SSID"
+      icon: mdi:wifi-strength-2
+      entity_category: diagnostic
+      id: sensorssid
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          id(sleep_timer_seconds)++;
+          if (id(sleep_timer_seconds) % 30 == 0) {
+            ESP_LOGI("sleep_timer", "Timer at %d seconds", id(sleep_timer_seconds));
+          }
+          if (id(sleep_timer_seconds) >= 90) {
+            ESP_LOGI("sleep_timer", "90 seconds elapsed, checking time and entering sleep");
+            id(check_time_and_sleep).execute();
+          }
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO4
+      mode: INPUT_PULLUP
+      inverted: true
+    id: right
+    name: "Right"
+    internal: true
+    on_press:
+      then:
+        - script.execute: reset_sleep_timer
+        - script.execute: refresh_departures
+
+  - platform: gpio
+    pin:
+      number: GPIO5
+      mode: INPUT_PULLUP
+      inverted: true
+    id: left
+    name: "Left"
+    internal: true
+    on_press:
+      then:
+        - script.execute: reset_sleep_timer
+        - script.execute: refresh_departures
+
+http_request:
+  verify_ssl: false
+  timeout: 15s
+  watchdog_timeout: 20s
+
+script:
+  - id: reset_sleep_timer
+    mode: queued
+    then:
+      - lambda: |-
+          ESP_LOGI("sleep_timer", "Timer reset to 0");
+          id(sleep_timer_seconds) = 0;
+
+  - id: handle_wakeup
+    mode: single
+    then:
+      - lambda: |-
+          auto wakeup_cause = esp_sleep_get_wakeup_cause();
+          ESP_LOGI("wakeup", "Wakeup cause: %d (0=undefined, 2=ext0/GPIO, 4=timer)", wakeup_cause);
+      - script.execute: refresh_departures
+
+  - id: refresh_departures
+    mode: single
+    then:
+      - lambda: |-
+          id(is_loading) = true;
+      - component.update: epaper_display
+      - http_request.get:
+          url: ${departures_url}
+          capture_response: true
+          max_response_buffer_size: 4096
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200) {
+                    id(csv_body) = body;
+                    ESP_LOGI("http", "Got CSV (%d bytes)", body.size());
+                  } else {
+                    ESP_LOGW("http", "HTTP %d", response->status_code);
+                  }
+                  id(is_loading) = false;
+              - delay: 100ms
+              - component.update: epaper_display
+
+  - id: check_time_and_sleep
+    mode: single
+    then:
+      - lambda: |-
+          auto time = id(sntp_time).now();
+          if (!time.is_valid()) {
+            ESP_LOGW("sleep_script", "Time not available, sleeping for 30 minutes");
+            id(onboard_led).turn_off();
+            id(deep_sleep_1).set_sleep_duration(30 * 60 * 1000);
+            id(deep_sleep_1).begin_sleep();
+            return;
+          }
+
+          int hour = time.hour;
+          int minute = time.minute;
+          int total_minutes = hour * 60 + minute;
+          ESP_LOGI("sleep_script", "Current time: %02d:%02d", hour, minute);
+
+          id(onboard_led).turn_off();
+
+          if (hour >= 22 || hour < 6) {
+            int minutes_until_6am;
+            if (hour >= 22) {
+              minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
+            } else {
+              minutes_until_6am = (6 - hour) * 60 - minute;
+            }
+            ESP_LOGI("sleep_script", "Night time, sleeping for %d minutes until 6am", minutes_until_6am);
+            id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
+          } else if (total_minutes >= 410 && total_minutes < 440) {
+            ESP_LOGI("sleep_script", "Rush hour (06:50-07:20), sleeping for 2 minutes");
+            id(deep_sleep_1).set_sleep_duration(2 * 60 * 1000);
+          } else {
+            ESP_LOGI("sleep_script", "Day time, sleeping for 10 minutes");
+            id(deep_sleep_1).set_sleep_duration(10 * 60 * 1000);
+          }
+
+          id(deep_sleep_1).begin_sleep();
+
+font:
+  - file: "gfonts://Roboto Condensed@500"
+    id: font_header
+    size: 30
+    glyphs: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .:,;-+()[]&/äöüÄÖÜß!?#''"@'
+  - file: "gfonts://Roboto Condensed@400"
+    id: font_row
+    size: 34
+    glyphs: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .:,;-+()[]&/äöüÄÖÜß!?#''"@'
+  - file: "gfonts://Roboto Condensed@400"
+    id: font_clock
+    size: 24
+    glyphs: "0123456789: "
+  - file: "gfonts://Roboto Condensed@400"
+    id: font_status
+    size: 24
+    glyphs: "0123456789.°C %"
+  - file: "fonts/materialdesignicons-webfont.ttf"
+    id: font_bat_icon
+    size: 24
+    glyphs:
+      - "\U000F007A"
+      - "\U000F007B"
+      - "\U000F007C"
+      - "\U000F007D"
+      - "\U000F007E"
+      - "\U000F007F"
+      - "\U000F0080"
+      - "\U000F0081"
+      - "\U000F0082"
+      - "\U000F0079"
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    model: 7.50inV2p
+    full_update_every: 2
+    cs_pin: GPIO10
+    dc_pin: GPIO11
+    reset_pin:
+      number: GPIO12
+      inverted: false
+    busy_pin:
+      number: GPIO13
+      inverted: true
+    update_interval: never
+    lambda: |-
+      // Column positions (x)
+      const int COL_TIME = 4;
+      const int COL_LINE = 100;
+      const int COL_STATION = 240;
+      const int COL_DIR = 400;
+      const int TABLE_RIGHT = 796;
+
+      // Row layout
+      const int HEADER_Y = 32;
+      const int ROW_START_Y = 40;
+      const int ROW_HEIGHT = 40;
+      const int MAX_ROWS = 11;
+
+      // Parse CSV stored in global
+      std::string &csv = id(csv_body);
+
+      // Split into lines
+      std::vector<std::string> lines;
+      {
+        size_t pos = 0;
+        while (pos < csv.size()) {
+          size_t nl = csv.find('\n', pos);
+          if (nl == std::string::npos) {
+            if (pos < csv.size()) lines.push_back(csv.substr(pos));
+            break;
+          }
+          lines.push_back(csv.substr(pos, nl - pos));
+          pos = nl + 1;
+        }
+      }
+
+      // Parse a CSV field, handling quoting
+      auto parse_csv_line = [](const std::string &line) -> std::vector<std::string> {
+        std::vector<std::string> fields;
+        std::string field;
+        bool in_quotes = false;
+        for (size_t i = 0; i < line.size(); i++) {
+          char c = line[i];
+          if (c == '\r') continue;
+          if (in_quotes) {
+            if (c == '"') {
+              if (i + 1 < line.size() && line[i + 1] == '"') {
+                field += '"';
+                i++;
+              } else {
+                in_quotes = false;
+              }
+            } else {
+              field += c;
+            }
+          } else {
+            if (c == '"') {
+              in_quotes = true;
+            } else if (c == ',') {
+              fields.push_back(field);
+              field.clear();
+            } else {
+              field += c;
+            }
+          }
+        }
+        fields.push_back(field);
+        return fields;
+      };
+
+      // Truncate a string to fit within pixel width (approximate: 0.55 * font_size per char)
+      auto truncate_to_width = [](const std::string &s, int max_chars) -> std::string {
+        if ((int)s.size() <= max_chars) return s;
+        if (max_chars <= 2) return s.substr(0, max_chars);
+        return s.substr(0, max_chars - 2) + "..";
+      };
+
+      // Background
+      it.fill(COLOR_OFF);
+
+      if (lines.empty() || csv.empty()) {
+        if (id(is_loading)) {
+          it.print(400, 240, id(font_row), COLOR_ON, TextAlign::CENTER, "Loading...");
+        } else {
+          it.print(400, 240, id(font_row), COLOR_ON, TextAlign::CENTER, "No data");
+        }
+      } else {
+        // First line is the header: clock,Linie,Von,Richtung
+        std::string clock_str;
+        if (!lines.empty()) {
+          auto hdr = parse_csv_line(lines[0]);
+          if (hdr.size() >= 1) clock_str = hdr[0];
+        }
+
+        // Draw status bar top-right: [temp] [battery_icon] [clock]
+        const int STATUS_Y = 4;
+        int status_x = TABLE_RIGHT;
+        if (!clock_str.empty()) {
+          it.printf(status_x, STATUS_Y, id(font_clock), COLOR_ON, TextAlign::TOP_RIGHT, "%s", clock_str.c_str());
+          status_x -= 58;
+        }
+        it.printf(status_x, STATUS_Y, id(font_bat_icon), COLOR_ON, TextAlign::TOP_RIGHT, "%s", id(battery_glyph).c_str());
+        status_x -= 30;
+        if (id(temp_sensor).has_state()) {
+          it.printf(status_x, STATUS_Y, id(font_status), COLOR_ON, TextAlign::TOP_RIGHT, "%.1f°C", id(temp_sensor).state);
+        }
+
+        // Draw column headers
+        it.print(COL_TIME, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Zeit");
+        it.print(COL_LINE, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Linie");
+        it.print(COL_STATION, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Von");
+        it.print(COL_DIR, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Richtung");
+
+        // Header underline
+        it.line(COL_TIME, HEADER_Y + 4, TABLE_RIGHT, HEADER_Y + 4, COLOR_ON);
+
+        // Data rows (skip line 0 which is the header)
+        int row_count = std::min((int)lines.size() - 1, MAX_ROWS);
+        for (int i = 0; i < row_count; i++) {
+          auto fields = parse_csv_line(lines[i + 1]);
+          if (fields.size() < 4) continue;
+
+          int y = ROW_START_Y + i * ROW_HEIGHT;
+          int baseline = y + 32;
+
+          // Alternating row background
+          if (i % 2 == 1) {
+            it.filled_rectangle(0, y, 800, ROW_HEIGHT, COLOR_ON);
+          }
+          auto fg = (i % 2 == 1) ? COLOR_OFF : COLOR_ON;
+
+          std::string time_s = fields[0];
+          std::string line_s = truncate_to_width(fields[1], 10);
+          std::string station_s = truncate_to_width(fields[2], 10);
+          std::string dir_s = truncate_to_width(fields[3], 29);
+
+          it.printf(COL_TIME, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", time_s.c_str());
+          it.printf(COL_LINE, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", line_s.c_str());
+          it.printf(COL_STATION, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", station_s.c_str());
+          it.printf(COL_DIR, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", dir_s.c_str());
+        }
+      }
+
+      // Loading indicator (top-left)
+      if (id(is_loading)) {
+        it.print(4, 4, id(font_header), COLOR_ON, TextAlign::TOP_LEFT, "Loading...");
+      }

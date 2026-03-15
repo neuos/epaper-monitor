@@ -1,0 +1,60 @@
+substitutions:
+  name: e1001
+  friendly_name: "reTerminal E1001"
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+
+esp32:
+  board: seeed_xiao_esp32s3
+  framework:
+    type: esp-idf
+
+logger:
+  hardware_uart: UART0 # Required to report logs over USB on this device
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          ESP_LOGI("heartbeat", ".");
+
+# define font to display words
+font:
+  - file: "gfonts://Inter@700"
+    id: myFont
+    size: 24
+
+# define SPI interface
+spi:
+  clk_pin: GPIO7
+  mosi_pin: GPIO9
+
+display:
+  - platform: waveshare_epaper
+    id: epaper_display
+    model: 7.50inv2 # You can use 7.50inv2alt when you draw complex info and it display not good.
+    cs_pin: GPIO10
+    dc_pin: GPIO11
+    reset_pin:
+      number: GPIO12
+      inverted: false
+    busy_pin:
+      number: GPIO13
+      inverted: true
+    update_interval: 300s
+    lambda: |-
+      it.print(0, 0, id(myFont), "Hello World!");

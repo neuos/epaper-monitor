@@ -1,0 +1,32 @@
+esphome:
+  name: reterminal-e1001
+  friendly_name: reterminal E1001
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+
+# Enable logging
+logger:
+
+# Enable Home Assistant API
+api:
+  encryption:
+    key: "GEuvtI5WAM4F+z7Xy9de8RbZJonBp2Ov7D9ZlaehT8g="
+
+ota:
+  - platform: esphome
+    password: "b3d26ba33c4bad6493cf46c292eccc4a"
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+  # Enable fallback hotspot (captive portal) in case wifi connection fails
+  ap:
+    ssid: "Reterminal-E1001"
+    password: "J33H5DnKNSdz"
+
+captive_portal:
+    
