@@ -1,6 +1,7 @@
 substitutions:
   name: e1001
   friendly_name: "reTerminal E1001"
+  departures_url: "https://oebb.home.neuhuber.eu/departures.csv?stations=1290501:1292001:1390761,0905026:1390764,1390563:1390162:1390277&num_journeys=10&additional_time=5&total=11"
 
 esphome:
   name: ${name}
@@ -59,6 +60,7 @@ deep_sleep:
 spi:
   clk_pin: GPIO7
   mosi_pin: GPIO9
+
 i2c:
   scl: GPIO20
   sda: GPIO19
@@ -76,6 +78,10 @@ globals:
     type: std::string
     restore_value: false
     initial_value: "\"\\U000F0079\""
+  - id: csv_body
+    type: std::string
+    restore_value: false
+    initial_value: '""'
 
 sensor:
   - platform: sht4x
@@ -158,9 +164,13 @@ light:
     internal: true
 
 time:
-  - platform: homeassistant
-    id: homeassistant_time
+  - platform: sntp
+    id: sntp_time
     timezone: "Europe/Vienna"
+    servers:
+      - 0.pool.ntp.org
+      - 1.pool.ntp.org
+      - 2.pool.ntp.org
 
 text_sensor:
   - platform: version
@@ -221,8 +231,8 @@ binary_sensor:
 
 http_request:
   verify_ssl: false
-  timeout: 10s
-  watchdog_timeout: 15s
+  timeout: 15s
+  watchdog_timeout: 20s
 
 script:
   - id: reset_sleep_timer
@@ -246,15 +256,28 @@ script:
       - lambda: |-
           id(is_loading) = true;
       - component.update: epaper_display
-      - lambda: |-
-          ESP_LOGI("refresh", "Updating dashboard_image_departures");
-          id(dashboard_image_departures).update();
+      - http_request.get:
+          url: ${departures_url}
+          capture_response: true
+          max_response_buffer_size: 4096
+          on_response:
+            then:
+              - lambda: |-
+                  if (response->status_code == 200) {
+                    id(csv_body) = body;
+                    ESP_LOGI("http", "Got CSV (%d bytes)", body.size());
+                  } else {
+                    ESP_LOGW("http", "HTTP %d", response->status_code);
+                  }
+                  id(is_loading) = false;
+              - delay: 100ms
+              - component.update: epaper_display
 
   - id: check_time_and_sleep
     mode: single
     then:
       - lambda: |-
-          auto time = id(homeassistant_time).now();
+          auto time = id(sntp_time).now();
           if (!time.is_valid()) {
             ESP_LOGW("sleep_script", "Time not available, sleeping for 30 minutes");
             id(onboard_led).turn_off();
@@ -271,7 +294,6 @@ script:
           id(onboard_led).turn_off();
 
           if (hour >= 22 || hour < 6) {
-            // Night (22:00-06:00): sleep until 6am
             int minutes_until_6am;
             if (hour >= 22) {
               minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
@@ -281,51 +303,46 @@ script:
             ESP_LOGI("sleep_script", "Night time, sleeping for %d minutes until 6am", minutes_until_6am);
             id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
           } else if (total_minutes >= 410 && total_minutes < 440) {
-            // Rush hour (06:50-07:20): refresh every 2 minutes
             ESP_LOGI("sleep_script", "Rush hour (06:50-07:20), sleeping for 2 minutes");
             id(deep_sleep_1).set_sleep_duration(2 * 60 * 1000);
           } else {
-            // Daytime: refresh every 60 minutes
-            ESP_LOGI("sleep_script", "Day time, sleeping for 60 minutes");
-            id(deep_sleep_1).set_sleep_duration(60 * 60 * 1000);
+            ESP_LOGI("sleep_script", "Day time, sleeping for 10 minutes");
+            id(deep_sleep_1).set_sleep_duration(10 * 60 * 1000);
           }
 
           id(deep_sleep_1).begin_sleep();
 
-online_image:
-  - id: dashboard_image_departures
-    format: PNG
-    type: BINARY
-    url: https://screenshot.oracle.neuhuber.eu/screenshot?width=800&height=480&delay_ms=0&bw=true&wait_for=%5Bdata-ready%5D&url=https%3A%2F%2Foebb.oracle.neuhuber.eu%2Fmulti.html%3Fstations%3D1290501%3A1292001%2C0905026%2C1390563%26num_journeys%3D10%26additional_time%3D5%26total%3D10%26update_interval%3D30%26font_color%3Dffffff%26background_color%3D000000%26show_clock%3Dtrue%26show_header%3Dtrue
-    update_interval: never
-    on_download_finished:
-      - lambda: |-
-          id(is_loading) = false;
-      - delay: 100ms
-      - component.update: epaper_display
-
 font:
-  - file: "gfonts://Inter@700"
-    id: font_inter
+  - file: "gfonts://Roboto Condensed@500"
+    id: font_header
+    size: 30
+    glyphs: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .:,;-+()[]&/äöüÄÖÜß!?#''"@'
+  - file: "gfonts://Roboto Condensed@400"
+    id: font_row
+    size: 34
+    glyphs: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .:,;-+()[]&/äöüÄÖÜß!?#''"@'
+  - file: "gfonts://Roboto Condensed@400"
+    id: font_clock
     size: 24
-  - file: "gfonts://Arimo"
+    glyphs: "0123456789: "
+  - file: "gfonts://Roboto Condensed@400"
     id: font_status
-    size: 18
-    glyphs: "0123456789.°C "
+    size: 24
+    glyphs: "0123456789.°C %"
   - file: "fonts/materialdesignicons-webfont.ttf"
     id: font_bat_icon
     size: 24
     glyphs:
-      - "\U000F007A" # mdi-battery-10
-      - "\U000F007B" # mdi-battery-20
-      - "\U000F007C" # mdi-battery-30
-      - "\U000F007D" # mdi-battery-40
-      - "\U000F007E" # mdi-battery-50
-      - "\U000F007F" # mdi-battery-60
-      - "\U000F0080" # mdi-battery-70
-      - "\U000F0081" # mdi-battery-80
-      - "\U000F0082" # mdi-battery-90
-      - "\U000F0079" # mdi-battery (full)
+      - "\U000F007A"
+      - "\U000F007B"
+      - "\U000F007C"
+      - "\U000F007D"
+      - "\U000F007E"
+      - "\U000F007F"
+      - "\U000F0080"
+      - "\U000F0081"
+      - "\U000F0082"
+      - "\U000F0079"
 
 display:
   - platform: waveshare_epaper
@@ -342,14 +359,145 @@ display:
       inverted: true
     update_interval: never
     lambda: |-
-      it.image(0, 0, id(dashboard_image_departures));
-      // Status overlay: battery icon then temperature in top left
-      it.filled_rectangle(0, 0, 120, 26, COLOR_OFF);
-      it.printf(2, 1, id(font_bat_icon), COLOR_ON, TextAlign::TOP_LEFT, "%s", id(battery_glyph).c_str());
-      if (id(temp_sensor).has_state()) {
-        it.printf(28, 4, id(font_status), COLOR_ON, TextAlign::TOP_LEFT, "%.1f°C", id(temp_sensor).state);
+      // Column positions (x)
+      const int COL_TIME = 4;
+      const int COL_LINE = 100;
+      const int COL_STATION = 240;
+      const int COL_DIR = 400;
+      const int TABLE_RIGHT = 796;
+
+      // Row layout
+      const int HEADER_Y = 32;
+      const int ROW_START_Y = 40;
+      const int ROW_HEIGHT = 40;
+      const int MAX_ROWS = 11;
+
+      // Parse CSV stored in global
+      std::string &csv = id(csv_body);
+
+      // Split into lines
+      std::vector<std::string> lines;
+      {
+        size_t pos = 0;
+        while (pos < csv.size()) {
+          size_t nl = csv.find('\n', pos);
+          if (nl == std::string::npos) {
+            if (pos < csv.size()) lines.push_back(csv.substr(pos));
+            break;
+          }
+          lines.push_back(csv.substr(pos, nl - pos));
+          pos = nl + 1;
+        }
       }
+
+      // Parse a CSV field, handling quoting
+      auto parse_csv_line = [](const std::string &line) -> std::vector<std::string> {
+        std::vector<std::string> fields;
+        std::string field;
+        bool in_quotes = false;
+        for (size_t i = 0; i < line.size(); i++) {
+          char c = line[i];
+          if (c == '\r') continue;
+          if (in_quotes) {
+            if (c == '"') {
+              if (i + 1 < line.size() && line[i + 1] == '"') {
+                field += '"';
+                i++;
+              } else {
+                in_quotes = false;
+              }
+            } else {
+              field += c;
+            }
+          } else {
+            if (c == '"') {
+              in_quotes = true;
+            } else if (c == ',') {
+              fields.push_back(field);
+              field.clear();
+            } else {
+              field += c;
+            }
+          }
+        }
+        fields.push_back(field);
+        return fields;
+      };
+
+      // Truncate a string to fit within pixel width (approximate: 0.55 * font_size per char)
+      auto truncate_to_width = [](const std::string &s, int max_chars) -> std::string {
+        if ((int)s.size() <= max_chars) return s;
+        if (max_chars <= 2) return s.substr(0, max_chars);
+        return s.substr(0, max_chars - 2) + "..";
+      };
+
+      // Background
+      it.fill(COLOR_OFF);
+
+      if (lines.empty() || csv.empty()) {
+        if (id(is_loading)) {
+          it.print(400, 240, id(font_row), COLOR_ON, TextAlign::CENTER, "Loading...");
+        } else {
+          it.print(400, 240, id(font_row), COLOR_ON, TextAlign::CENTER, "No data");
+        }
+      } else {
+        // First line is the header: clock,Linie,Von,Richtung
+        std::string clock_str;
+        if (!lines.empty()) {
+          auto hdr = parse_csv_line(lines[0]);
+          if (hdr.size() >= 1) clock_str = hdr[0];
+        }
+
+        // Draw status bar top-right: [temp] [battery_icon] [clock]
+        const int STATUS_Y = 4;
+        int status_x = TABLE_RIGHT;
+        if (!clock_str.empty()) {
+          it.printf(status_x, STATUS_Y, id(font_clock), COLOR_ON, TextAlign::TOP_RIGHT, "%s", clock_str.c_str());
+          status_x -= 58;
+        }
+        it.printf(status_x, STATUS_Y, id(font_bat_icon), COLOR_ON, TextAlign::TOP_RIGHT, "%s", id(battery_glyph).c_str());
+        status_x -= 30;
+        if (id(temp_sensor).has_state()) {
+          it.printf(status_x, STATUS_Y, id(font_status), COLOR_ON, TextAlign::TOP_RIGHT, "%.1f°C", id(temp_sensor).state);
+        }
+
+        // Draw column headers
+        it.print(COL_TIME, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Zeit");
+        it.print(COL_LINE, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Linie");
+        it.print(COL_STATION, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Von");
+        it.print(COL_DIR, HEADER_Y, id(font_header), COLOR_ON, TextAlign::BASELINE_LEFT, "Richtung");
+
+        // Header underline
+        it.line(COL_TIME, HEADER_Y + 4, TABLE_RIGHT, HEADER_Y + 4, COLOR_ON);
+
+        // Data rows (skip line 0 which is the header)
+        int row_count = std::min((int)lines.size() - 1, MAX_ROWS);
+        for (int i = 0; i < row_count; i++) {
+          auto fields = parse_csv_line(lines[i + 1]);
+          if (fields.size() < 4) continue;
+
+          int y = ROW_START_Y + i * ROW_HEIGHT;
+          int baseline = y + 32;
+
+          // Alternating row background
+          if (i % 2 == 1) {
+            it.filled_rectangle(0, y, 800, ROW_HEIGHT, COLOR_ON);
+          }
+          auto fg = (i % 2 == 1) ? COLOR_OFF : COLOR_ON;
+
+          std::string time_s = fields[0];
+          std::string line_s = truncate_to_width(fields[1], 10);
+          std::string station_s = truncate_to_width(fields[2], 10);
+          std::string dir_s = truncate_to_width(fields[3], 29);
+
+          it.printf(COL_TIME, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", time_s.c_str());
+          it.printf(COL_LINE, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", line_s.c_str());
+          it.printf(COL_STATION, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", station_s.c_str());
+          it.printf(COL_DIR, baseline, id(font_row), fg, TextAlign::BASELINE_LEFT, "%s", dir_s.c_str());
+        }
+      }
+
+      // Loading indicator (top-left)
       if (id(is_loading)) {
-        it.filled_rectangle(300, 0, 200, 32, COLOR_OFF);
-        it.print(400, 4, id(font_inter), COLOR_ON, TextAlign::TOP_CENTER, "Loading...");
+        it.print(4, 4, id(font_header), COLOR_ON, TextAlign::TOP_LEFT, "Loading...");
       }
