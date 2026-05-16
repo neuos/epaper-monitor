@@ -60,15 +60,28 @@ const (
 var httpClient = &http.Client{Timeout: httpTimeout}
 
 func main() {
-	port := cmp.Or(os.Getenv("PORT"), "80")
+	port := ":" + cmp.Or(os.Getenv("PORT"), "80")
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/departures.csv", handleDeparturesCSV)
 
 	log.Printf("oebb-monitor listening on :%s", port)
-	if err := http.ListenAndServe(":"+port, mux); err != nil {
+
+	err := http.ListenAndServe(port, logRequestHandler(mux))
+	if err != nil {
 		log.Fatal(err)
 	}
+}
+
+func logRequestHandler(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		h.ServeHTTP(w, r)
+
+		// Log request details
+		duration := time.Since(start)
+		log.Printf("Method: %s, URI: %s, IP: %s, Duration: %s\n", r.Method, r.URL, r.RemoteAddr, duration)
+	})
 }
 
 func handleDeparturesCSV(w http.ResponseWriter, r *http.Request) {
@@ -354,6 +367,6 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return s[:n] + "."
 
 }

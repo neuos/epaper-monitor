@@ -257,6 +257,7 @@ script:
     then:
       - lambda: |-
           id(is_loading) = true;
+          ESP_LOGI("http", "Requesting (%s)", "${departures_url}");
       - component.update: epaper_display
       - http_request.get:
           url: ${departures_url}
