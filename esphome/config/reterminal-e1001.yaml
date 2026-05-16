@@ -295,21 +295,23 @@ script:
 
           id(onboard_led).turn_off();
 
+          int minutes_until_6am;
           if (hour >= 22 || hour < 6) {
-            int minutes_until_6am;
             if (hour >= 22) {
               minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
             } else {
               minutes_until_6am = (6 - hour) * 60 - minute;
             }
-            ESP_LOGI("sleep_script", "Night time, sleeping for %d minutes until 6am", minutes_until_6am);
-            id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
-          } else if (total_minutes >= 410 && total_minutes < 440) {
-            ESP_LOGI("sleep_script", "Rush hour (06:50-07:20), sleeping for 2 minutes");
+          } else if (hour >= 6) {
+            minutes_until_6am = ((24 - hour) * 60 - minute) + (6 * 60);
+          }
+
+          if (total_minutes >= 410 && total_minutes < 450) {
+            ESP_LOGI("sleep_script", "Rush hour (06:50-07:30), sleeping for 2 minutes");
             id(deep_sleep_1).set_sleep_duration(2 * 60 * 1000);
           } else {
-            ESP_LOGI("sleep_script", "Day time, sleeping for 10 minutes");
-            id(deep_sleep_1).set_sleep_duration(10 * 60 * 1000);
+            ESP_LOGI("sleep_script", "Outside rush hour, sleeping for %d minutes until 6am", minutes_until_6am);
+            id(deep_sleep_1).set_sleep_duration(minutes_until_6am * 60 * 1000);
           }
 
           id(deep_sleep_1).begin_sleep();
