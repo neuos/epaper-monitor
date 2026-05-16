@@ -11,9 +11,9 @@ import (
 	"net/http"
 	"os"
 	"sort"
-	"sync"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,8 +36,9 @@ type rtInfo struct {
 }
 
 type stationEntry struct {
-	ID         string
-	Directions []string
+	ID             string
+	AdditionalTime int
+	Directions     []string
 }
 
 type departure struct {
@@ -50,7 +51,6 @@ type departure struct {
 
 const (
 	defaultNumJourneys    = 6
-	defaultAdditionalTime = 0
 	defaultTotal          = 12
 	defaultProductsFilter = "1011111111011"
 	scottyBaseURL         = "https://fahrplan.oebb.at/bin/stboard.exe/dn"
@@ -81,11 +81,14 @@ func handleDeparturesCSV(w http.ResponseWriter, r *http.Request) {
 	}
 
 	numJourneys := parseIntOr(q.Get("num_journeys"), defaultNumJourneys)
-	additionalTime := parseIntOr(q.Get("additional_time"), defaultAdditionalTime)
 	total := parseIntOr(q.Get("total"), defaultTotal)
 	productsFilter := cmp.Or(q.Get("products_filter"), defaultProductsFilter)
 
-	entries := parseStations(stationsRaw)
+	entries, err := parseStations(stationsRaw)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	now := time.Now()
 	if loc := loadLocation(); loc != nil {
@@ -98,6 +101,7 @@ func handleDeparturesCSV(w http.ResponseWriter, r *http.Request) {
 
 	var wg sync.WaitGroup
 	for _, entry := range entries {
+		entry := entry
 		dirs := entry.Directions
 		if len(dirs) == 0 {
 			dirs = []string{""}
@@ -106,7 +110,7 @@ func handleDeparturesCSV(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func(stationID, directionID string) {
 				defer wg.Done()
-				deps, err := fetchStation(stationID, directionID, numJourneys, additionalTime, productsFilter, now)
+				deps, err := fetchStation(stationID, directionID, numJourneys, entry.AdditionalTime, productsFilter, now)
 				if err != nil {
 					log.Printf("error fetching station %s dir %s: %v", stationID, directionID, err)
 					return
@@ -156,7 +160,7 @@ func handleDeparturesCSV(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func parseStations(raw string) []stationEntry {
+func parseStations(raw string) ([]stationEntry, error) {
 	parts := strings.Split(raw, ",")
 	entries := make([]stationEntry, 0, len(parts))
 	for _, p := range parts {
@@ -164,9 +168,24 @@ func parseStations(raw string) []stationEntry {
 		if p == "" {
 			continue
 		}
-		subparts := strings.Split(p, ":")
-		entry := stationEntry{ID: subparts[0]}
-		for _, d := range subparts[1:] {
+		stationAndTime := strings.SplitN(p, "@", 2)
+		if len(stationAndTime) != 2 {
+			return nil, fmt.Errorf("station selector %q must use stationId@additionalTime[:dir1:dir2...]", p)
+		}
+		stationID := strings.TrimSpace(stationAndTime[0])
+		if stationID == "" {
+			return nil, fmt.Errorf("station selector %q is missing a station id", p)
+		}
+		timeAndDirs := strings.Split(stationAndTime[1], ":")
+		if len(timeAndDirs) == 0 || strings.TrimSpace(timeAndDirs[0]) == "" {
+			return nil, fmt.Errorf("station selector %q is missing additionalTime", p)
+		}
+		additionalTime, err := strconv.Atoi(strings.TrimSpace(timeAndDirs[0]))
+		if err != nil {
+			return nil, fmt.Errorf("station selector %q has invalid additionalTime: %w", p, err)
+		}
+		entry := stationEntry{ID: stationID, AdditionalTime: additionalTime}
+		for _, d := range timeAndDirs[1:] {
 			d = strings.TrimSpace(d)
 			if d != "" {
 				entry.Directions = append(entry.Directions, d)
@@ -174,7 +193,7 @@ func parseStations(raw string) []stationEntry {
 		}
 		entries = append(entries, entry)
 	}
-	return entries
+	return entries, nil
 }
 
 func fetchStation(stationID, directionID string, numJourneys, additionalTime int, productsFilter string, now time.Time) ([]departure, error) {

@@ -36,16 +36,15 @@ Returns `text/csv; charset=utf-8`.
 
 | Parameter | Default | Description |
 |---|---:|---|
-| `stations` | *(required)* | Comma-separated list of station selectors: `stationId` or `stationId:dirId1:dirId2,...` (direction filters are optional). Example: `208100002,8100108:1180207:8100002`. Station/direction IDs can be sourced from https://dave2ooo.github.io/oebb-link-creator/html/mode1.html. |
+| `stations` | *(required)* | Comma-separated list of station selectors: `stationId@additionalTime` or `stationId@additionalTime:dirId1:dirId2,...` (direction filters are optional and `additionalTime` is required). Example: `208100002@5,8100108@2:1180207:8100002`. Malformed selectors return `400 Bad Request`. Station/direction IDs can be sourced from https://dave2ooo.github.io/oebb-link-creator/html/mode1.html. |
 | `num_journeys` | `6` | Departures to fetch per station. |
-| `additional_time` | `0` | Lead time in minutes; departures sooner than this are skipped. |
 | `total` | `12` | Maximum rows in the merged result. |
 | `products_filter` | `1011111111011` | ÖBB product bitmask filter. |
 
 #### Example
 
 ```text
-example.com/departures.csv?stations=208100002,8100108:1180207:8100002&num_journeys=10&additional_time=5&total=10
+example.com/departures.csv?stations=208100002@5,8100108@2:1180207:8100002&num_journeys=10&total=10
 ```
 
 #### CSV format

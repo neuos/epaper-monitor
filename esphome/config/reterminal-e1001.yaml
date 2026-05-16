@@ -3,7 +3,7 @@ substitutions:
   friendly_name: "reTerminal E1001"
   departures_host: !secret departures_host
   departures_stations: !secret departures_stations
-  departures_url: "${departures_host}/departures.csv?stations=${departures_stations}&num_journeys=10&additional_time=1&total=11"
+  departures_url: "${departures_host}/departures.csv?stations=${departures_stations}&num_journeys=10&total=11"
 
 esphome:
   name: ${name}
